@@ -35,7 +35,8 @@ Java Spring Boot application for signal processing and backtesting:
 #### Sample Data:
 - `HDFCBANK.csv`, `INFY.csv`, `RELIANCE.csv`, `TCS.csv` - Historical stock data
 
-## Project Files
+### Web Interface
+- `trade_tracker.html` - HTML-based user interface for the signal engine
 
 ### Configuration Files
 - `.gitignore` - Git ignore patterns for Python, Java, and common files
