@@ -165,10 +165,8 @@ Respond with ONLY a valid JSON object:
         return _neutral_result(symbol, "LLM unavailable — sentiment treated as neutral")
 
     try:
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        start   = cleaned.find("{")
-        end     = cleaned.rfind("}") + 1
-        parsed  = json.loads(cleaned[start:end])
+        from json_utils import extract_json
+        parsed = extract_json(raw)
 
         return {
             "symbol":          symbol,

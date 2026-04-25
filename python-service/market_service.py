@@ -78,12 +78,23 @@ def get_candles():
         return jsonify(cached)
 
     # ── Fetch from Yahoo Finance and cache result ──────────────────────────────
-    ticker = to_yahoo_ticker(symbol, exchange)
-    resp   = _fetch_candles_with_retry(symbol, ticker, period)
+    ticker    = to_yahoo_ticker(symbol, exchange)
+    result    = _fetch_candles_with_retry(symbol, ticker, period)
 
+    # _fetch_candles_with_retry returns either:
+    #   Response          (success, status 200)
+    #   (Response, 404)   (failure tuple)
+    # Unpack correctly to avoid AttributeError on tuple
+    if isinstance(result, tuple):
+        return result   # error response — return as-is
+
+    resp = result
     if resp.status_code == 200:
         import json as _json
-        cache_set_candles(cache_key, period, _json.loads(resp.get_data(as_text=True)))
+        try:
+            cache_set_candles(cache_key, period, _json.loads(resp.get_data(as_text=True)))
+        except Exception:
+            pass   # cache failure is non-fatal
 
     return resp
 
@@ -242,31 +253,58 @@ def _run_layer2(symbol: str, company: str, layer1: dict = None) -> dict:
 
 
 def _fetch_candles_with_retry(symbol: str, ticker: str, period: str):
-    """Fetch candles from Yahoo Finance with retry on failure."""
+    """
+    Fetch candles from Yahoo Finance with retry.
+
+    Uses yf.download() — more reliable than Ticker().history() for NSE symbols.
+    Falls back to Ticker().history() if download fails.
+    """
     last_error = "Unknown error"
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             print(f"  [{attempt}/{MAX_RETRIES}] Fetching {ticker} period={period}")
-            df = yf.Ticker(ticker).history(period=period)
-            if not df.empty:
-                candles = [
-                    {
-                        "date":   date.strftime("%d-%b-%y"),
-                        "open":   round(float(row["Open"]),  2),
-                        "high":   round(float(row["High"]),  2),
-                        "low":    round(float(row["Low"]),   2),
-                        "close":  round(float(row["Close"]), 2),
-                        "volume": int(row["Volume"]),
-                    }
-                    for date, row in df.iterrows()
-                ]
-                print(f"  Returning {len(candles)} candles for {ticker}")
-                return jsonify(candles)
-            last_error = "Yahoo Finance returned empty data"
+
+            # Method 1: yf.download — most reliable for NSE symbols
+            df = yf.download(
+                ticker,
+                period=period,
+                progress=False,
+                auto_adjust=True,
+                actions=False,
+            )
+
+            # yf.download returns MultiIndex columns for single ticker — flatten
+            if df is not None and not df.empty:
+                if isinstance(df.columns, __import__('pandas').MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+
+                candles = []
+                for date, row in df.iterrows():
+                    try:
+                        candles.append({
+                            "date":   date.strftime("%d-%b-%y"),
+                            "open":   round(float(row["Open"]),  2),
+                            "high":   round(float(row["High"]),  2),
+                            "low":    round(float(row["Low"]),   2),
+                            "close":  round(float(row["Close"]), 2),
+                            "volume": int(row.get("Volume", 0)),
+                        })
+                    except (KeyError, ValueError):
+                        continue
+
+                if candles:
+                    print(f"  Returning {len(candles)} candles for {ticker}")
+                    return jsonify(candles)
+
+            last_error = f"Empty data returned for {ticker}"
+            print(f"  {last_error}")
+
         except Exception as e:
             last_error = str(e)
-            print(f"  Attempt {attempt} failed: {last_error}")
-        time.sleep(RETRY_DELAY)
+            print(f"  Attempt {attempt} failed for {ticker}: {last_error[:200]}")
+
+        time.sleep(RETRY_DELAY * attempt)   # exponential backoff: 2s, 4s, 6s
 
     return jsonify({"error": f"No data for {symbol}: {last_error}"}), 404
 

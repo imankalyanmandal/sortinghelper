@@ -133,8 +133,12 @@ def _fetch_bse_concall(symbol: str):
             r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
             if r.status_code != 200:
                 continue
-
-            data = r.json()
+            if 'application/json' not in r.headers.get('Content-Type', ''):
+                continue
+            try:
+                data = r.json()
+            except Exception:
+                continue
             announcements = data.get("Table", [])
 
             for ann in announcements[:5]:   # check top 5 most recent
@@ -343,8 +347,8 @@ Rules:
     try:
         import json
         raw    = call_llm(prompt, max_tokens=600)
-        clean  = raw.strip().replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean)
+        from json_utils import extract_json
+        result = extract_json(raw)
 
         return {
             "tone":            result.get("tone",            "CAUTIOUS"),

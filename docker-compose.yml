@@ -10,21 +10,16 @@ services:
     restart: unless-stopped
     ports:
       - "5000:5000"
+    env_file:
+      - ./python-service/.env
     environment:
       - FLASK_ENV=production
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - CEREBRAS_API_KEY=${CEREBRAS_API_KEY}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - GEMINI_RETRY_DELAY=${GEMINI_RETRY_DELAY:-4}
-      - MOCK_MODE=${MOCK_MODE:-false}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 15s
+      retries: 5
+      start_period: 30s
 
   # ── Java Spring Boot service ───────────────────────────────────────────────
   java-service:
@@ -43,7 +38,7 @@ services:
       - signal-db:/data
     depends_on:
       python-service:
-        condition: service_healthy
+        condition: service_started
 
   # ── Trade tracker UI (nginx serves the HTML) ───────────────────────────────
   ui:

@@ -2,15 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for pdfminer
 RUN apt-get update && apt-get install -y \
     gcc \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copy all Python files EXCEPT .env (keys come from docker-compose env_file)
+COPY *.py .
 
 EXPOSE 5000
 

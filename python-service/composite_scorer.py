@@ -86,19 +86,15 @@ def _call_llm_and_parse(symbol, company, context, fund_score, sent_score, conc_s
         return _fallback_verdict(symbol)
 
     try:
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        # Find JSON object in case model adds preamble text
-        start = cleaned.find("{")
-        end   = cleaned.rfind("}") + 1
-        if start == -1 or end == 0:
-            raise ValueError("No JSON object found in response")
-        parsed = json.loads(cleaned[start:end])
+        from json_utils import extract_json
+        parsed = extract_json(raw)
         parsed["layer2_pass"]    = parsed.get("composite_score", 0) >= PASS_THRESHOLD
         parsed["pass_threshold"] = PASS_THRESHOLD
         return parsed
 
     except (json.JSONDecodeError, ValueError) as e:
         print(f"  [{symbol}] JSON parse error: {e} — using fallback")
+        print(f"  [{symbol}] Raw response: {raw[:200]}")
         return _fallback_verdict(symbol)
 
 

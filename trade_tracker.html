@@ -275,7 +275,15 @@ select option{background:var(--bg2)}
             </select>
             <div class="form-hint" id="mode-hint">Fetches 3mo candles, checks current RSI/SMA state</div>
           </div>
-          <div></div>
+          <div>
+            <div class="form-label">Strictness <span style="font-size:10px;color:var(--text3)">(Layer 1 only)</span></div>
+            <select id="p-strictness">
+              <option value="STRICT">Strict — 1 to 3 signals, high precision</option>
+              <option value="MODERATE" selected>Moderate — 3 to 6 signals (recommended)</option>
+              <option value="RELAXED">Relaxed — 5 to 10 signals, paper trading</option>
+            </select>
+            <div class="form-hint" id="strict-hint">Layer 2 and Layer 3 are the same across all levels</div>
+          </div>
         </div>
         <div class="pipeline-row">
           <div id="period-group">
@@ -770,7 +778,8 @@ async function runPipeline() {
   }
 
   try {
-    log(`Starting pipeline — index=${index}, period=${period}, topN=${topN}, exchange=${exchange}`);
+    const strictness = document.getElementById('p-strictness')?.value || 'MODERATE';
+    log(`Starting pipeline — index=${index}, strictness=${strictness}, period=${period}, topN=${topN}`);
     stText.textContent = 'Running Layer 1 + Layer 2...';
 
     const mode = document.getElementById('p-mode').value;
@@ -778,7 +787,8 @@ async function runPipeline() {
     if (mode === 'live') {
       stText.textContent = 'Running live indicator scan...';
       log(`Live scan mode — checking current RSI/SMA/ATR state (3mo data)`);
-      const liveResult = await fetch(`${BASE()}/api/v1/live/pipeline?index=${encodeURIComponent(index)}&topN=${topN}&exchange=${exchange}`);
+      const strictness = document.getElementById('p-strictness').value;
+      const liveResult = await fetch(`${BASE()}/api/v1/live/pipeline?index=${encodeURIComponent(index)}&topN=${topN}&exchange=${exchange}&strictness=${strictness}`);
       if (!liveResult.ok) throw new Error(`HTTP ${liveResult.status}: ${await liveResult.text()}`);
       pipeline = await liveResult.json();
       // Normalise live pipeline response to match backtest pipeline format

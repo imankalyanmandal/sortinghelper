@@ -9,9 +9,9 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>signal-engine.common.management</groupId>
-    <artifactId>SignalEngineApplication</artifactId>
+    <artifactId>java-service</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <packaging>war</packaging>
+    <packaging>jar</packaging>
     <name/>
     <description/>
     <url/>

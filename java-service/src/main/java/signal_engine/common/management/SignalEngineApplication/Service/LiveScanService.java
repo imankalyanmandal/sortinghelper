@@ -10,6 +10,7 @@ import signal_engine.common.management.SignalEngineApplication.Indicators.SMAInd
 import signal_engine.common.management.SignalEngineApplication.model.Candle;
 import signal_engine.common.management.SignalEngineApplication.model.LiveScanResult;
 import signal_engine.common.management.SignalEngineApplication.model.MarketRegime;
+import signal_engine.common.management.SignalEngineApplication.model.ScanStrictness;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -152,10 +153,14 @@ public class LiveScanService {
     // ── Public API ─────────────────────────────────────────────────────────────
 
     public List<LiveScanResult> scan(String index, int topN) {
-        return scan(index, topN, null);
+        return scan(index, topN, null, ScanStrictness.MODERATE);
     }
 
     public List<LiveScanResult> scan(String index, int topN, MarketRegime regime) {
+        return scan(index, topN, regime, ScanStrictness.MODERATE);
+    }
+
+    public List<LiveScanResult> scan(String index, int topN, MarketRegime regime, ScanStrictness strictness) {
         List<String> symbols = marketDataClient.fetchNifty50Symbols(index);
         log.info("[LiveScan] {} — {} stocks | regime={}", index, symbols.size(),
                 regime != null ? regime.getRegime() : "not checked");
@@ -232,10 +237,14 @@ public class LiveScanService {
     }
 
     public LiveScanResult analyseOne(String symbol) {
-        return analyseOne(symbol, fetchBenchmarkReturn(), null);
+        return analyseOne(symbol, fetchBenchmarkReturn(), null, ScanStrictness.MODERATE);
     }
 
     public LiveScanResult analyseOne(String symbol, double niftyReturn, MarketRegime regime) {
+        return analyseOne(symbol, niftyReturn, regime, ScanStrictness.MODERATE);
+    }
+
+    public LiveScanResult analyseOne(String symbol, double niftyReturn, MarketRegime regime, ScanStrictness strictness) {
         List<Candle> candles = marketDataClient.fetchCandles(symbol, DATA_PERIOD, "NS");
         if (candles == null || candles.size() < 55) {
             return LiveScanResult.error(symbol,
@@ -246,10 +255,10 @@ public class LiveScanService {
         double price = candles.get(last).getClose();
 
         // ── Indicators ─────────────────────────────────────────────────────────
-        Double rsi    = RSIIndicator.calculate(candles, last, 14);
-        Double sma20  = SMAIndicator.calculate(candles, last, 20);
-        Double sma50  = SMAIndicator.calculate(candles, last, 50);
-        Double sma200 = SMAIndicator.calculate(candles, last, 200);
+        Double rsi    = RSIIndicator.calculateImproved(candles, last, 14);
+        Double sma20  = SMAIndicator.calculateImproved(candles, last, 20);
+        Double sma50  = SMAIndicator.calculateImproved(candles, last, 50);
+        Double sma200 = SMAIndicator.calculateImproved(candles, last, 200);
         Double atr    = ATRIndicator.calculate(candles, last, 14);
 
         if (rsi == null || sma20 == null || sma50 == null || atr == null) {
@@ -277,7 +286,7 @@ public class LiveScanService {
         // 52-week high
         double high52w     = candles.stream().mapToDouble(Candle::getHigh).max().orElse(price);
         double pctTo52wHigh = ((high52w - price) / price) * 100;
-        boolean nearResistance = pctTo52wHigh < RESISTANCE_PCT;
+        boolean nearResistance = pctTo52wHigh < strictness.resistancePct;
 
         // Relative strength
         double stockReturn = computeReturn(candles, last, RS_LOOKBACK_BARS);
@@ -302,23 +311,23 @@ public class LiveScanService {
             gateFailures.add(String.format(
                     "Gate 1: Price (%.2f) ≤ SMA50 (%.2f) — not in uptrend", price, sma50));
         }
-        if (!sma50SlopePositive) {
+        if (strictness.sma50SlopeGate && !sma50SlopePositive) {
             gateFailures.add(String.format(
                     "Gate 1: SMA50 slope flat/negative over last %d bars", SMA50_SLOPE_BARS));
         }
 
         // Gate 2: ATR bounds
-        if (atrPct < ATR_PCT_MIN) {
+        if (atrPct < strictness.atrPctMin) {
             gateFailures.add(String.format(
-                    "Gate 2: ATR %.1f%% too low (min %.0f%%) — stock not moving", atrPct, ATR_PCT_MIN));
+                    "Gate 2: ATR %.1f%% too low (min %.0f%%) — stock not moving", atrPct, strictness.atrPctMin));
         }
-        if (atrPct > ATR_PCT_MAX) {
+        if (atrPct > strictness.atrPctMax) {
             gateFailures.add(String.format(
-                    "Gate 2: ATR %.1f%% too high (max %.0f%%) — too volatile to size correctly", atrPct, ATR_PCT_MAX));
+                    "Gate 2: ATR %.1f%% too high (max %.0f%%) — too volatile to size correctly", atrPct, strictness.atrPctMax));
         }
 
         // Gate 3: HH + HL price structure
-        if (!higherHigh || !higherLow) {
+        if (strictness.hhHlGate && (!higherHigh || !higherLow)) {
             gateFailures.add(String.format(
                     "Gate 3: Weak structure — %s%s in last %d bars",
                     higherHigh ? "" : "no higher high ",
@@ -327,9 +336,9 @@ public class LiveScanService {
         }
 
         // Gate 4: Risk % ≤ 4%
-        if (riskPct > STOP_MAX_PCT) {
+        if (riskPct > strictness.stopMaxPct) {
             gateFailures.add(String.format(
-                    "Gate 4: Risk %.1f%% > %.0f%% max — stop too wide", riskPct, STOP_MAX_PCT));
+                    "Gate 4: Risk %.1f%% > %.0f%% max — stop too wide", riskPct, strictness.stopMaxPct));
         }
 
         // Gate 5: Market regime
@@ -348,8 +357,8 @@ public class LiveScanService {
         // ══════════════════════════════════════════════════════════════════════
         // PHASE 2: SETUP TYPE DETECTION
         // ══════════════════════════════════════════════════════════════════════
-        boolean isPullback = Math.abs(price - sma20) / sma20 <= PULLBACK_BAND;
-        boolean isBreakout = price > recentHigh && volumeRatio >= VOL_BREAKOUT_MIN;
+        boolean isPullback = Math.abs(price - sma20) / sma20 <= strictness.pullbackBand;
+        boolean isBreakout = price > recentHigh && volumeRatio >= strictness.strictness.volBreakoutMin;
 
         // No valid setup type
         if (!isPullback && !isBreakout) {
@@ -380,27 +389,27 @@ public class LiveScanService {
 
         if ("PULLBACK".equals(setupType)) {
             // RSI must be in pullback zone (35-50)
-            if (rsi < PULLBACK_RSI_LOW || rsi > PULLBACK_RSI_HIGH) {
+            if (rsi < strictness.pullbackRsiLow || rsi > strictness.pullbackRsiHigh) {
                 setupGateFailures.add(String.format(
-                        "Pullback RSI %.1f not in [%.0f–%.0f] range — " +
+                        "Pullback RSI %.1f not in [%.0f\u2013%.0f] range — " +
                         (rsi < PULLBACK_RSI_LOW ? "wait for more of a pullback" : "RSI too high, momentum fading"),
-                        rsi, PULLBACK_RSI_LOW, PULLBACK_RSI_HIGH));
+                        rsi, strictness.pullbackRsiLow, strictness.pullbackRsiHigh));
             }
             // Volume minimum
-            if (volumeRatio < VOL_PULLBACK_MIN) {
+            if (volumeRatio < strictness.strictness.volPullbackMin) {
                 setupGateFailures.add(String.format(
                         "Pullback volume %.1fx < %.1fx minimum — no institutional interest", volumeRatio, VOL_PULLBACK_MIN));
             }
         } else { // BREAKOUT
             // RSI must be in breakout zone (55-65)
-            if (rsi < BREAKOUT_RSI_LOW || rsi > BREAKOUT_RSI_HIGH) {
+            if (rsi < strictness.breakoutRsiLow || rsi > strictness.breakoutRsiHigh) {
                 setupGateFailures.add(String.format(
                         "Breakout RSI %.1f not in [%.0f–%.0f] range — " +
                         (rsi < BREAKOUT_RSI_LOW ? "RSI too low for a breakout" : "RSI overbought, late entry"),
-                        rsi, BREAKOUT_RSI_LOW, BREAKOUT_RSI_HIGH));
+                        rsi, strictness.breakoutRsiLow, strictness.breakoutRsiHigh));
             }
             // Volume minimum (already checked for breakout type detection, but gate enforces)
-            if (volumeRatio < VOL_BREAKOUT_MIN) {
+            if (volumeRatio < strictness.strictness.volBreakoutMin) {
                 setupGateFailures.add(String.format(
                         "Breakout volume %.1fx < %.1fx required — false breakout risk", volumeRatio, VOL_BREAKOUT_MIN));
             }
@@ -488,7 +497,7 @@ public class LiveScanService {
         String  verdict, conviction;
         if (score >= 70) {
             isSetup = true; verdict = "STRONG " + setupType; conviction = "HIGH";
-        } else if (score >= SETUP_MIN_SCORE) {
+        } else if (score >= strictness.minSetupScore) {
             isSetup = true; verdict = setupType;              conviction = score >= 60 ? "MEDIUM" : "LOW";
         } else {
             isSetup = false; verdict = "WEAK " + setupType;  conviction = "LOW";
@@ -513,8 +522,8 @@ public class LiveScanService {
     private boolean isSma50SlopePositive(List<Candle> candles, int last) {
         int prev = last - SMA50_SLOPE_BARS;
         if (prev < 50) return false;
-        Double now = SMAIndicator.calculate(candles, last, 50);
-        Double old = SMAIndicator.calculate(candles, prev, 50);
+        Double now = SMAIndicator.calculateImproved(candles, last, 50);
+        Double old = SMAIndicator.calculateImproved(candles, prev, 50);
         return now != null && old != null && now > old;
     }
 
